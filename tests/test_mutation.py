@@ -9,7 +9,6 @@ from mutmut.__main__ import (
     get_diff_for_mutant,
     orig_function_and_class_names_from_key,
     run_forced_fail_test,
-    Config,
     MutmutProgrammaticFailException,
     CatchOutput,
 )
@@ -154,6 +153,12 @@ def mutated_module(source: str) -> str:
         ('import foo', []),
         ('isinstance(a, b)', []),
         ('len(a)', []),
+        ('len(a)', ['sum(a)', 'len(None)']),
+        ('sum(a)', ['len(a)', 'sum(None)']),
+        ('chr(65)', ['chr(65 + 1)', 'chr(None)']),
+        ("ord('a')", ["ord('a') + 1", 'ord(None)']),
+        ('enum.Enum', ['enum.StrEnum', 'enum.IntEnum']),
+        ('enum.StrEnum', ['enum.Enum']),
         ('deepcopy(obj)', ['copy(obj)', 'deepcopy(None)']),
     ]
 )
@@ -485,7 +490,7 @@ def test_run_forced_fail_test_with_failing_test(_start, _stop, _dump_output, cap
     print(f"out: {out}")
     print(f"err: {err}")
     assert 'done' in out
-    assert os.environ['MUTANT_UNDER_TEST'] is ''
+    assert os.environ['MUTANT_UNDER_TEST'] == ''
 
 
 # Negate the effects of CatchOutput because it does not play nicely with capfd in GitHub Actions
@@ -514,7 +519,7 @@ def test_run_forced_fail_test_with_all_tests_passing(_start, _stop, _dump_output
     with pytest.raises(SystemExit) as error:
         run_forced_fail_test(runner)
 
-    assert error.value.code is 1
+    assert error.value.code == 1
     out, err = capfd.readouterr()
     assert 'FAILED: Unable to force test failures' in out
 
@@ -667,3 +672,43 @@ class Adder:
     xǁAdderǁadd__mutmut_orig.__name__ = 'xǁAdderǁadd'
 
 print(Adder(1).add(2))"""
+
+@pytest.mark.parametrize("original, want_patterns", [
+    (
+        "re.compile(r'\\d+')",
+        [
+            "re.compile(r'\\d*')",              # + → *
+            "re.compile(r'[0-9]+')",            # \d → [0-9]
+        ],
+    ),
+    (
+        "re.search(r'[abc]+')",
+        [
+            "re.search(r'[abc]*')",             # + → *
+            "re.search(r'[cba]+')",             # [abc] → [cba]
+        ],
+    ),
+    (
+        "re.match(r'\\w{1,}')",
+        [
+            "re.match(r'[A-Za-z0-9_]{1,}')"     # \w → [A-Za-z0-9_]
+        ],
+    ),
+    (
+        "re.match(r'foo?')",
+        [
+            "re.match(r'foo*')",            # ? → *
+            "re.match(r'foo{0,1}')",       # ? → {0,1}
+        ],
+    ),
+    (
+        "re.search(r'bar{0,1}')",
+        [
+            "re.search(r'bar?')",          # {0,1} → ?
+        ],
+    ),
+])
+def test_regex_mutations_loose(original, want_patterns):
+    mutants = mutants_for_source(original)
+    for want in want_patterns:
+        assert want in mutants, f"expected {want!r} in {mutants}"
