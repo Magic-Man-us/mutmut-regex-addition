@@ -231,23 +231,7 @@ def operator_match(node: cst.Match) -> Iterable[cst.CSTNode]:
 # Regex mutation support
 RE_FUNCTIONS = {"compile", "search", "match", "fullmatch", "sub", "subn", "findall", "finditer", "split"}
 
-# Character class swaps for regex patterns
-REGEX_CHAR_CLASS_SWAPS = [
-    (r"\d", r"\D"),
-    (r"\D", r"\d"),
-    (r"\w", r"\W"),
-    (r"\W", r"\w"),
-    (r"\s", r"\S"),
-    (r"\S", r"\s"),
-]
-
-# Quantifier mutations
-REGEX_QUANTIFIER_SWAPS = [
-    ("+", "*"),  # one-or-more -> zero-or-more
-    ("*", "+"),  # zero-or-more -> one-or-more
-]
-
-# Anchors and boundaries to remove
+# Anchors and boundaries to remove (high-value mutations that catch real bugs)
 REGEX_ANCHOR_REMOVALS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
 
 # Regex flags
@@ -290,39 +274,7 @@ def operator_regex_pattern(node: cst.Call) -> Iterable[cst.Call]:
     quote_char = pattern_with_quotes[0]
     pattern_content = pattern_with_quotes[1:-1]  # strip quotes
 
-    # Character class swaps
-    for old, new in REGEX_CHAR_CLASS_SWAPS:
-        if old in pattern_content:
-            new_content = pattern_content.replace(old, new, 1)
-            if new_content != pattern_content:  # avoid duplicates
-                new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
-                mutated_arg = pattern_arg.with_changes(
-                    value=pattern_node.with_changes(value=new_pattern)
-                )
-                yield node.with_changes(args=[mutated_arg, *node.args[1:]])
-
-    # Quantifier swaps
-    for old, new in REGEX_QUANTIFIER_SWAPS:
-        if old in pattern_content:
-            new_content = pattern_content.replace(old, new, 1)
-            if new_content != pattern_content:  # avoid duplicates
-                new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
-                mutated_arg = pattern_arg.with_changes(
-                    value=pattern_node.with_changes(value=new_pattern)
-                )
-                yield node.with_changes(args=[mutated_arg, *node.args[1:]])
-
-    # Remove quantifier '?'
-    if "?" in pattern_content:
-        new_content = pattern_content.replace("?", "", 1)
-        if new_content != pattern_content:  # avoid duplicates
-            new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
-            mutated_arg = pattern_arg.with_changes(
-                value=pattern_node.with_changes(value=new_pattern)
-            )
-            yield node.with_changes(args=[mutated_arg, *node.args[1:]])
-
-    # Anchor removals
+    # Anchor removals (safe, high-value mutations)
     for anchor in REGEX_ANCHOR_REMOVALS:
         if anchor in pattern_content:
             new_content = pattern_content.replace(anchor, "", 1)
