@@ -227,6 +227,153 @@ def operator_match(node: cst.Match) -> Iterable[cst.CSTNode]:
         for i in range(len(node.cases)):
             yield node.with_changes(cases=[*node.cases[:i], *node.cases[i+1:]])
 
+
+# Regex mutation support
+RE_FUNCTIONS = {"compile", "search", "match", "fullmatch", "sub", "subn", "findall", "finditer", "split"}
+
+# Character class swaps for regex patterns
+REGEX_CHAR_CLASS_SWAPS = [
+    (r"\d", r"\D"),
+    (r"\D", r"\d"),
+    (r"\w", r"\W"),
+    (r"\W", r"\w"),
+    (r"\s", r"\S"),
+    (r"\S", r"\s"),
+]
+
+# Quantifier mutations
+REGEX_QUANTIFIER_SWAPS = [
+    ("+", "*"),  # one-or-more -> zero-or-more
+    ("*", "+"),  # zero-or-more -> one-or-more
+]
+
+# Anchors and boundaries to remove
+REGEX_ANCHOR_REMOVALS = ["^", "$", r"\b", r"\B", r"\A", r"\Z"]
+
+# Regex flags
+RE_FLAG_NAMES = ["IGNORECASE", "I", "MULTILINE", "M", "DOTALL", "S", "VERBOSE", "X", "ASCII", "A"]
+
+
+def operator_regex_pattern(node: cst.Call) -> Iterable[cst.Call]:
+    """Mutate regex patterns in re.compile/search/match/sub/findall calls"""
+    # Only match re.compile(...), re.search(...), etc.
+    if not m.matches(node.func, m.Attribute(value=m.Name("re"), attr=m.Name())):
+        return
+
+    func_name = cst.ensure_type(node.func, cst.Attribute).attr.value
+    if func_name not in RE_FUNCTIONS:
+        return
+
+    # Pattern argument is the first positional arg
+    if not node.args:
+        return
+
+    pattern_arg = node.args[0]
+    if not isinstance(pattern_arg.value, cst.SimpleString):
+        return
+
+    pattern_node = pattern_arg.value
+    pattern_str = pattern_node.value  # includes quotes and prefix
+
+    # Extract prefix (r, u, f, etc.) and quotes
+    quote_start = min([i for i in [pattern_str.find('"'), pattern_str.find("'")] if i != -1], default=-1)
+    if quote_start == -1:
+        return
+
+    prefix = pattern_str[:quote_start]
+    pattern_with_quotes = pattern_str[quote_start:]
+
+    # Skip triple-quoted strings
+    if pattern_with_quotes.startswith('"""') or pattern_with_quotes.startswith("'''"):
+        return
+
+    quote_char = pattern_with_quotes[0]
+    pattern_content = pattern_with_quotes[1:-1]  # strip quotes
+
+    # Character class swaps
+    for old, new in REGEX_CHAR_CLASS_SWAPS:
+        if old in pattern_content:
+            new_content = pattern_content.replace(old, new, 1)
+            if new_content != pattern_content:  # avoid duplicates
+                new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
+                mutated_arg = pattern_arg.with_changes(
+                    value=pattern_node.with_changes(value=new_pattern)
+                )
+                yield node.with_changes(args=[mutated_arg, *node.args[1:]])
+
+    # Quantifier swaps
+    for old, new in REGEX_QUANTIFIER_SWAPS:
+        if old in pattern_content:
+            new_content = pattern_content.replace(old, new, 1)
+            if new_content != pattern_content:  # avoid duplicates
+                new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
+                mutated_arg = pattern_arg.with_changes(
+                    value=pattern_node.with_changes(value=new_pattern)
+                )
+                yield node.with_changes(args=[mutated_arg, *node.args[1:]])
+
+    # Remove quantifier '?'
+    if "?" in pattern_content:
+        new_content = pattern_content.replace("?", "", 1)
+        if new_content != pattern_content:  # avoid duplicates
+            new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
+            mutated_arg = pattern_arg.with_changes(
+                value=pattern_node.with_changes(value=new_pattern)
+            )
+            yield node.with_changes(args=[mutated_arg, *node.args[1:]])
+
+    # Anchor removals
+    for anchor in REGEX_ANCHOR_REMOVALS:
+        if anchor in pattern_content:
+            new_content = pattern_content.replace(anchor, "", 1)
+            if new_content != pattern_content:  # avoid duplicates
+                new_pattern = f"{prefix}{quote_char}{new_content}{quote_char}"
+                mutated_arg = pattern_arg.with_changes(
+                    value=pattern_node.with_changes(value=new_pattern)
+                )
+                yield node.with_changes(args=[mutated_arg, *node.args[1:]])
+
+
+def operator_regex_flags(node: cst.Call) -> Iterable[cst.Call]:
+    """Mutate regex flags in re.* calls"""
+    # Only match re.compile(...), re.search(...), etc.
+    if not m.matches(node.func, m.Attribute(value=m.Name("re"), attr=m.Name())):
+        return
+
+    func_name = cst.ensure_type(node.func, cst.Attribute).attr.value
+    if func_name not in RE_FUNCTIONS:
+        return
+
+    # Look for flags argument (can be positional or keyword)
+    # For compile/search/match etc., flags is typically 2nd or 3rd positional arg or 'flags' keyword
+
+    # Check if any argument references re.IGNORECASE, re.MULTILINE, etc.
+    for i, arg in enumerate(node.args):
+        # Check for re.FLAGNAME patterns
+        if m.matches(arg.value, m.Attribute(value=m.Name("re"), attr=m.Name())):
+            flag_attr = cst.ensure_type(arg.value, cst.Attribute)
+            flag_name = flag_attr.attr.value
+
+            if flag_name in RE_FLAG_NAMES:
+                # Remove this flag
+                yield node.with_changes(args=[*node.args[:i], *node.args[i+1:]])
+
+                # Also try swapping to other flags
+                for other_flag in ["IGNORECASE", "MULTILINE", "DOTALL"]:
+                    if other_flag != flag_name and other_flag not in flag_name:
+                        new_flag = cst.Attribute(
+                            value=cst.Name("re"),
+                            attr=cst.Name(other_flag)
+                        )
+                        mutated_arg = arg.with_changes(value=new_flag)
+                        yield node.with_changes(args=[*node.args[:i], mutated_arg, *node.args[i+1:]])
+
+        # Check for re.I | re.M style flag combinations
+        if m.matches(arg.value, m.BinaryOperation(operator=m.BitOr())):
+            # Remove the entire flags argument
+            yield node.with_changes(args=[*node.args[:i], *node.args[i+1:]])
+
+
 # Operators that should be called on specific node types
 mutation_operators: OPERATORS_TYPE = [
     (cst.BaseNumber, operator_number),
@@ -239,6 +386,8 @@ mutation_operators: OPERATORS_TYPE = [
     (cst.Call, operator_dict_arguments),
     (cst.Call, operator_arg_removal),
     (cst.Call, operator_string_methods_swap),
+    (cst.Call, operator_regex_pattern),
+    (cst.Call, operator_regex_flags),
     (cst.Lambda, operator_lambda),
     (cst.CSTNode, operator_keywords),
     (cst.CSTNode, operator_swap_op),

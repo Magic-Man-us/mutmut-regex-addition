@@ -183,6 +183,148 @@ def mutated_module(source: str) -> str:
         ('isinstance(a, b)', []),
         ('len(a)', []),
         ('deepcopy(obj)', ['copy(obj)', 'deepcopy(None)']),
+
+        # Regex mutations - character class swaps
+        (r're.compile(r"\d+")', [
+            r're.compile(None)',
+            r're.compile(r"XX\d+XX")',
+            r're.compile(r"\D+")',
+            r're.compile(r"\D+")',  # duplicate from string upper() and regex char swap
+            r're.compile(r"\d*")',
+            r're.compile(r"\d+")',  # duplicate from string lower()/capitalize()
+            r're.compile(r"\d+")',  # duplicate from string lower()/capitalize()
+        ]),
+        (r're.search(r"\w+", text)', [
+            r're.search(None, text)',
+            r're.search(r"XX\w+XX", text)',
+            r're.search(r"\W+", text)',
+            r're.search(r"\W+", text)',  # duplicate
+            r're.search(r"\w*", text)',
+            r're.search(r"\w+", )',
+            r're.search(r"\w+", None)',
+            r're.search(r"\w+", text)',  # duplicate
+            r're.search(r"\w+", text)',  # duplicate
+            r're.search(text)',  # pattern arg removed
+        ]),
+        (r're.match(r"\s*")', [
+            r're.match(None)',
+            r're.match(r"XX\s*XX")',
+            r're.match(r"\S*")',
+            r're.match(r"\S*")',  # duplicate
+            r're.match(r"\s*")',  # duplicate
+            r're.match(r"\s*")',  # duplicate
+            r're.match(r"\s+")',
+        ]),
+
+        # Regex mutations - anchor removals
+        (r're.compile(r"^\d+$")', [
+            r're.compile(None)',
+            r're.compile(r"XX^\d+$XX")',
+            r're.compile(r"\d+$")',  # remove ^
+            r're.compile(r"^\D+$")',  # \d -> \D
+            r're.compile(r"^\D+$")',  # duplicate from string upper()
+            r're.compile(r"^\d*$")',  # + -> *
+            r're.compile(r"^\d+")',  # remove $
+            r're.compile(r"^\d+$")',  # duplicate from string lower()/capitalize()
+            r're.compile(r"^\d+$")',  # duplicate from string lower()/capitalize()
+        ]),
+        (r're.search(r"\bword\b", text)', [
+            r're.search(None, text)',
+            r're.search(r"XX\bword\bXX", text)',
+            r're.search(r"\BWORD\B", text)',  # \b -> \B and upper()
+            r're.search(r"\bword\b", )',
+            r're.search(r"\bword\b", None)',
+            r're.search(r"\bword\b", text)',  # duplicate
+            r're.search(r"\bword\b", text)',  # duplicate
+            r're.search(r"word\b", text)',  # remove first \b
+            r're.search(text)',  # pattern arg removed
+        ]),
+
+        # Regex mutations - quantifiers
+        (r're.compile(r"a+")', [
+            r're.compile(None)',
+            r're.compile(r"A+")',
+            r're.compile(r"A+")',  # duplicate from string upper()/capitalize()
+            r're.compile(r"XXa+XX")',
+            r're.compile(r"a*")',  # + -> *
+            r're.compile(r"a+")',  # duplicate from string lower()
+        ]),
+        (r're.compile(r"a*")', [
+            r're.compile(None)',
+            r're.compile(r"A*")',
+            r're.compile(r"A*")',  # duplicate from string upper()/capitalize()
+            r're.compile(r"XXa*XX")',
+            r're.compile(r"a*")',  # duplicate from string lower()
+            r're.compile(r"a+")',  # * -> +
+        ]),
+        (r're.compile(r"a?")', [
+            r're.compile(None)',
+            r're.compile(r"A?")',
+            r're.compile(r"A?")',  # duplicate from string upper()/capitalize()
+            r're.compile(r"XXa?XX")',
+            r're.compile(r"a")',  # ? -> empty
+            r're.compile(r"a?")',  # duplicate from string lower()
+        ]),
+
+        # Regex mutations - flags
+        (r're.compile(r"test", re.IGNORECASE)', [
+            r're.compile(None, re.IGNORECASE)',
+            r're.compile(r"TEST", re.IGNORECASE)',
+            r're.compile(r"Test", re.IGNORECASE)',
+            r're.compile(r"XXtestXX", re.IGNORECASE)',
+            r're.compile(r"test", )',
+            r're.compile(r"test", )',  # duplicate from arg removal
+            r're.compile(r"test", None)',
+            r're.compile(r"test", re.DOTALL)',
+            r're.compile(r"test", re.IGNORECASE)',
+            r're.compile(r"test", re.MULTILINE)',
+            r're.compile(re.IGNORECASE)',  # pattern argument removed
+        ]),
+        (r're.search(r"[a-z]+", text, re.MULTILINE)', [
+            r're.search(None, text, re.MULTILINE)',
+            r're.search(r"XX[a-z]+XX", text, re.MULTILINE)',
+            r're.search(r"[A-Z]+", text, re.MULTILINE)',
+            r're.search(r"[a-z]*", text, re.MULTILINE)',
+            r're.search(r"[a-z]+", None, re.MULTILINE)',
+            r're.search(r"[a-z]+", re.MULTILINE)',  # second arg removed
+            r're.search(r"[a-z]+", text, )',
+            r're.search(r"[a-z]+", text, )',  # duplicate
+            r're.search(r"[a-z]+", text, None)',
+            r're.search(r"[a-z]+", text, re.DOTALL)',
+            r're.search(r"[a-z]+", text, re.IGNORECASE)',
+            r're.search(r"[a-z]+", text, re.MULTILINE)',  # duplicate
+            r're.search(r"[a-z]+", text, re.MULTILINE)',  # duplicate
+            r're.search(text, re.MULTILINE)',  # pattern arg removed
+        ]),
+
+        # Other re functions
+        (r're.findall(r"\d+", text)', [
+            r're.findall(None, text)',
+            r're.findall(r"XX\d+XX", text)',
+            r're.findall(r"\D+", text)',
+            r're.findall(r"\D+", text)',  # duplicate
+            r're.findall(r"\d*", text)',
+            r're.findall(r"\d+", )',
+            r're.findall(r"\d+", None)',
+            r're.findall(r"\d+", text)',  # duplicate
+            r're.findall(r"\d+", text)',  # duplicate
+            r're.findall(text)',  # pattern arg removed
+        ]),
+        (r're.sub(r"\s+", " ", text)', [
+            r're.sub(" ", text)',  # pattern arg removed
+            r're.sub(None, " ", text)',
+            r're.sub(r"XX\s+XX", " ", text)',
+            r're.sub(r"\S+", " ", text)',
+            r're.sub(r"\S+", " ", text)',  # duplicate
+            r're.sub(r"\s*", " ", text)',
+            r're.sub(r"\s+", " ", )',
+            r're.sub(r"\s+", " ", None)',
+            r're.sub(r"\s+", " ", text)',  # duplicate
+            r're.sub(r"\s+", " ", text)',  # duplicate
+            r're.sub(r"\s+", "XX XX", text)',
+            r're.sub(r"\s+", None, text)',
+            r're.sub(r"\s+", text)',  # second arg removed
+        ]),
     ]
 )
 def test_basic_mutations(original, expected):
